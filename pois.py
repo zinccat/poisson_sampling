@@ -9,10 +9,8 @@ from jax import jit
 
 Array = jnp.ndarray
 
-
-def num_samples(lam, N):
-    assert lam >= 1.0
-    assert N > 0
+@jit
+def num_samples(lam, N, safety_margin=1.2):
     b = 0.931 + 2.53 * lax.sqrt(lam)
     inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
 
@@ -20,7 +18,7 @@ def num_samples(lam, N):
     p_accept = 1 / inv_alpha
 
     # Total samples to generate (with safety margin)
-    total_samples = int(N / p_accept * 1.2)
+    total_samples = N / p_accept * safety_margin
     return total_samples
 
 
@@ -58,23 +56,28 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters, n) -> Array:
     k_samples = jnp.take(k_samples, accept_idx, fill_value=int(1e9))
     return k_samples
 
+def poisson_new(key, lam, shape, dtype=jnp.int32):
+    assert lam >= 1.0
+    n = int(num_samples(lam, shape[0]))
+    return _poisson_rejection(key, lam, shape, dtype, int(1e9), n)
+
 
 if __name__ == "__main__":
     key = jax.random.PRNGKey(0)
     lam = 12.0
     shape = (int(2**25),)
-    n = num_samples(lam, shape[0])
+    n = int(num_samples(lam, shape[0]))
     print("oversampling factor", n / shape[0])  # oversampling factor
     print(shape)
     dtype = jnp.int32
     max_iters = int(1e9)
 
-    _poisson_rejection(key, lam, shape, dtype, max_iters, n)
+    poisson_new(key, lam, shape)
     poisson(key, lam, shape)
 
     # Benchmark the function
     start = time()
-    new_arr = _poisson_rejection(key, lam, shape, dtype, max_iters, n)
+    new_arr = poisson_new(key, lam, shape)
     new_arr.block_until_ready()
     end = time()
     print(f"Execution time: {end - start:.6f} seconds")
