@@ -22,8 +22,8 @@ def num_samples(lam, N, safety_margin=1.2):
     return total_samples
 
 
-@partial(jit, static_argnums=(2, 3, 4, 5))
-def _poisson_rejection(key, lam, shape, dtype, max_iters, n) -> Array:
+@partial(jit, static_argnums=(2, 3, 4))
+def _poisson_rejection(key, lam, shape, dtype, n) -> Array:
     N = shape[0]  # Number of required samples
 
     # Parameters of the rejection algorithm
@@ -59,7 +59,10 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters, n) -> Array:
 def poisson_new(key, lam, shape, dtype=jnp.int32):
     assert lam >= 1.0
     n = int(num_samples(lam, shape[0]))
-    return _poisson_rejection(key, lam, shape, dtype, int(1e9), n)
+    out = _poisson_rejection(key, lam, shape, dtype, n)
+    # check if out contains any invalid values
+    assert jnp.all(out != int(1e9))
+    return out
 
 
 if __name__ == "__main__":
