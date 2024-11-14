@@ -1,13 +1,31 @@
 import jax
 from jax import lax, numpy as jnp
-from jax.random import uniform, split as _split
+from jax.random import uniform, poisson
 from functools import partial
 from timeit import default_timer as time
 from matplotlib import pyplot as plt
 import numpy as np
+from jax import jit
 
-@partial(jax.jit, static_argnums=(2, 3, 4))
-def sample_until_enough(key, lam, shape, dtype, max_iters) -> jnp.ndarray:
+Array = jnp.ndarray
+
+
+def num_samples(lam, N):
+    assert lam >= 1.0
+    assert N > 0
+    b = 0.931 + 2.53 * lax.sqrt(lam)
+    inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
+
+    # Estimate acceptance probability (approximate)
+    p_accept = 1 / inv_alpha
+
+    # Total samples to generate (with safety margin)
+    total_samples = int(N / p_accept * 1.2)
+    return total_samples
+
+
+@partial(jit, static_argnums=(2, 3, 4, 5))
+def _poisson_rejection(key, lam, shape, dtype, max_iters, n) -> Array:
     N = shape[0]  # Number of required samples
 
     # Parameters of the rejection algorithm
@@ -16,13 +34,6 @@ def sample_until_enough(key, lam, shape, dtype, max_iters) -> jnp.ndarray:
     a = -0.059 + 0.02483 * b
     inv_alpha = 1.1239 + 1.1328 / (b - 3.4)
     v_r = 0.9277 - 3.6224 / (b - 2)
-
-    # Estimate acceptance probability (approximate)
-    p_accept = 0.9  # TODO: Dynamically adjust this value as 1 / inv_alpha
-
-    # Total samples to generate (with safety margin)
-    total_samples = int(N / p_accept * 1.2)
-    total_samples = max(total_samples, N * 2)  # Ensure we have at least 2*N samples
 
     def rejection_sampler(key, total_samples):
         key, subkey_u, subkey_v = jax.random.split(key, 3)
@@ -42,30 +53,49 @@ def sample_until_enough(key, lam, shape, dtype, max_iters) -> jnp.ndarray:
         return key, k.astype(dtype), accept
 
     # Generate samples
-    key, k_samples, accept_flags = rejection_sampler(key, total_samples)
+    key, k_samples, accept_flags = rejection_sampler(key, n)
     accept_idx = jnp.nonzero(accept_flags, size=N, fill_value=int(1e9))[0]
     k_samples = jnp.take(k_samples, accept_idx, fill_value=int(1e9))
     return k_samples
+
 
 if __name__ == "__main__":
     key = jax.random.PRNGKey(0)
     lam = 12.0
     shape = (int(2**25),)
+    n = num_samples(lam, shape[0])
+    print("oversampling factor", n / shape[0])  # oversampling factor
     print(shape)
     dtype = jnp.int32
     max_iters = int(1e9)
 
-    sample_until_enough(key, lam, shape, dtype, max_iters)
+    _poisson_rejection(key, lam, shape, dtype, max_iters, n)
+    poisson(key, lam, shape)
 
     # Benchmark the function
     start = time()
-    arr = sample_until_enough(key, lam, shape, dtype, max_iters)
-    arr.block_until_ready()
+    new_arr = _poisson_rejection(key, lam, shape, dtype, max_iters, n)
+    new_arr.block_until_ready()
     end = time()
     print(f"Execution time: {end - start:.6f} seconds")
 
+    start = time()
+    ori_arr = poisson(key, lam, shape)
+    ori_arr.block_until_ready()
+    end = time()
+    print(f"Original Execution time: {end - start:.6f} seconds")
+
     # Plot the histogram
-    plt.hist(np.array(arr), bins=100, density=True)
+    all_samples = [ori_arr, new_arr]
+    all_samples = np.array(all_samples)
+    plt.hist(
+        all_samples.T,
+        bins=50,
+        alpha=0.5,
+        label=["Original", "Optimized", "NumPy"],
+        density=True,
+    )
+    plt.legend()
     plt.xlabel("Value")
     plt.ylabel("Frequency")
     plt.title("Poisson Distribution")
