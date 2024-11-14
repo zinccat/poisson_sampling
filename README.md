@@ -29,3 +29,5 @@ def _poisson_rejection(key, lam, shape, dtype, max_iters) -> Array:
   return k.astype(dtype)
 ```
 The original poisson_rejection function uses a while loop to generate poisson samples, which only stops when the last element is sampled, this wasted a lot of samples, i.e., tail/expectation times, which is not efficient especially when the sample size is large. Here we estimate the rejection rate and use the rejection rate to estimate the number of samples needed to generate the last sample, then we generate the samples in one go.
+
+![](poisson_sampling.png)
